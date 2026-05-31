@@ -10,10 +10,19 @@ end so each family pays one amount — no calculator required.
 
 1. **Who** — add everyone at the table (first names are fine).
 2. **Items** — photograph/upload the receipt, or type items in by hand. Every line is editable.
-3. **Split** — tap the people who shared each item. Tapping more than one splits it equally;
-   anything left untagged falls into "other / shared".
-4. **Total** — set the service-charge %, then read off each person's total. Use the
+3. **Split** — tap the people who shared each item. Tapping more than one splits it between
+   them; anything left untagged is treated as "the rest".
+4. **Total** — set the service-charge %, then read off each person's total. Leave **Share the
+   rest** on and any untagged items are spread across everyone at the table (no more anonymous
+   "other / shared" pile); switch it off to keep that leftover as its own line. Use the
    **By group** toggle to combine a household into one payment line.
+
+### Portion sizes (kids, light eaters)
+
+On the **Who** step, open **⚖ Portion sizes** to give anyone a share other than a full 100%.
+Set a child to, say, 60% and they pay a smaller slice of every *shared* item — both items
+ticked to several people and the shared "rest" — while the others automatically pick up the
+difference. Leave everyone at 100% for a plain even split.
 
 Themes and the house colour can be changed in the **Tweaks** panel (bottom-right).
 
@@ -37,7 +46,7 @@ Scanning uses the inexpensive Claude Haiku model, so a receipt scan costs a frac
 
 ## How it's hosted
 
-A single static `index.html` served from GitHub Pages, in this subfolder. No build step,
+A single static `index.html` served from GitHub Pages at the repo root. No build step,
 no backend. React and Babel load from a CDN at runtime.
 
 ## Updating

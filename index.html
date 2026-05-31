@@ -321,6 +321,18 @@ const CSS = `
 .funk-keylink { font-size: 11px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; text-decoration: none; }
 .funk-keyrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11px; font-weight: 700; color: var(--dim); }
 
+/* portion sizes (per-person share weights) */
+.funk-portions { margin-top: 16px; }
+.funk-portions-toggle { width: 100%; display: flex; align-items: center; gap: 8px; cursor: pointer; background: var(--field); border: 2px dashed var(--line); color: var(--dim); border-radius: 12px; padding: 12px 14px; font-family: var(--body); font-weight: 700; font-size: 11.5px; letter-spacing: 1px; text-transform: uppercase; }
+.funk-portions-toggle .state { color: var(--faint); }
+.funk-portions-toggle .chev { margin-left: auto; font-size: 13px; }
+.funk-portions-body { padding: 14px 4px 2px; }
+.funk-prow { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.funk-prow .nm { font-size: 14.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
+.funk-prow .lead { flex: 1; border-bottom: 2px dotted var(--line); transform: translateY(-3px); min-width: 12px; }
+.funk-prow .pct { width: 72px; text-align: right; min-height: 44px; padding: 8px 10px; }
+.funk-prow .sym { font-size: 15px; font-weight: 700; color: var(--dim); }
+
 /* footer */
 .funk-foot { text-align: center; padding: 18px 6px 6px; }
 .funk-foot .star { color: var(--accent); font-size: 13px; letter-spacing: 2px; }
@@ -362,6 +374,37 @@ function StrokeHeader({ step, children }) {
   return <h2 className="funk-stroke" style={{ background: c, color: inkFor(c) }}>{children}</h2>;
 }
 
+// Optional per-person portion sizes: 100% = a full share, drop a kid to 60% etc.
+function PortionsPanel({ people, setWeight }) {
+  const [open, setOpen] = useState(false);
+  if (people.length < 2) return null;
+  const custom = people.some((p) => parseFloat(p.weight) !== 100);
+  return (
+    <div className="funk-portions">
+      <button className="funk-portions-toggle" onClick={() => setOpen((o) => !o)}>
+        ⚖ Portion sizes <span className="state">{custom ? "· on" : "· optional"}</span>
+        <span className="chev">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="funk-portions-body">
+          <p className="funk-mini" style={{ margin: "0 0 12px" }}>
+            100% = a full share. Drop someone — say a child — to 60% and they pay a smaller slice of every shared item; the others pick up the rest.
+          </p>
+          {people.map((p) => (
+            <div className="funk-prow" key={p.id}>
+              <span className="nm">{p.name}</span>
+              <span className="lead" />
+              <input className="funk-input pct" inputMode="decimal" value={p.weight}
+                onChange={(e) => setWeight(p.id, e.target.value)} aria-label={"Portion size for " + p.name} />
+              <span className="sym">%</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TweaksPanel({ bg, setBg, accent, setAccent, texture, setTexture }) {
   const [open, setOpen] = useState(false);
   return (
@@ -399,7 +442,8 @@ function TweaksPanel({ bg, setBg, accent, setAccent, texture, setTexture }) {
 }
 
 function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServicePct, reset,
-  groups, sel, toggleSel, makeGroup, ungroup, renameGroup, viewMode, setViewMode }) {
+  groups, sel, toggleSel, makeGroup, ungroup, renameGroup, viewMode, setViewMode,
+  shareRest, setShareRest, restPool, accent }) {
   const svc = parseFloat(servicePct) || 0;
   const sharedTotal = unassigned + unassigned * svc / 100;
   const grandTotal = grand + sharedTotal;
@@ -427,6 +471,16 @@ function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServ
           <span className="sym">%</span>
         </span>
       </div>
+
+      {restPool > 0 && (
+        <div className="funk-svc">
+          <span className="funk-label">Share the rest between everyone</span>
+          <button className={"funk-switch" + (shareRest ? " on" : "")} style={{ background: shareRest ? accent : "var(--line)" }}
+            onClick={() => setShareRest(!shareRest)} aria-label="Share the untagged items between everyone">
+            <span className="knob" />
+          </button>
+        </div>
+      )}
 
       {totals.length === 0 ? (
         <div className="funk-empty">Add people and items first.</div>
@@ -510,7 +564,13 @@ function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServ
 
           {unassigned > 0 && (
             <div className="funk-note">
-              {money(unassigned)} of items aren’t tagged to anyone — sitting under “other / shared”. Pop back to the Split tab if any of that was yours.
+              {money(unassigned)} of items aren’t tagged to anyone — sitting under “other / shared”. Pop back to the Split tab if any of that was yours, or flip on “share the rest” above.
+            </div>
+          )}
+
+          {shareRest && restPool > 0 && (
+            <div className="funk-note">
+              {money(restPool)} of untagged items was shared between everyone by portion size. Set a child’s portion lower on the Who tab so they pay less; flip the switch off to leave it as a separate “other / shared” line instead.
             </div>
           )}
         </>
@@ -544,6 +604,7 @@ function App() {
   const [groups, setGroups] = useState([]);
   const [viewMode, setViewMode] = useState("person");
   const [sel, setSel] = useState([]);
+  const [shareRest, setShareRest] = useState(true);
 
   const [apiKey, setApiKey] = useState(loadKey());
   const [keyDraft, setKeyDraft] = useState("");
@@ -556,7 +617,7 @@ function App() {
   const addPerson = () => {
     const n = nameDraft.trim();
     if (!n) return;
-    setPeople((p) => [...p, { id: Date.now() + Math.random(), name: n }]);
+    setPeople((p) => [...p, { id: Date.now() + Math.random(), name: n, weight: 100 }]);
     setNameDraft("");
   };
   const removePerson = (id) => {
@@ -565,6 +626,7 @@ function App() {
     setGroups((gs) => gs.map((g) => ({ ...g, memberIds: g.memberIds.filter((m) => m !== id) })).filter((g) => g.memberIds.length));
     setSel((s) => s.filter((x) => x !== id));
   };
+  const setWeight = (id, val) => setPeople((p) => p.map((x) => (x.id === id ? { ...x, weight: val } : x)));
 
   // ── items ──
   const addItem = () => {
@@ -728,15 +790,31 @@ function App() {
   const renameGroup = (gid, name) => setGroups((gs) => gs.map((g) => (g.id === gid ? { ...g, name } : g)));
 
   // ── totals ──
+  // Each person carries a portion "weight" (100 = a full share; a kid might be 60).
+  // Any item shared by several people is divided by those weights, not just evenly,
+  // and — when "share the rest" is on — the untagged remainder is spread the same way.
+  const weightOf = (p) => { const w = parseFloat(p && p.weight); return isNaN(w) || w < 0 ? 0 : w; };
+  const sumW = (ids) => ids.reduce((s, id) => { const pp = people.find((x) => x.id === id); return s + (pp ? weightOf(pp) : 0); }, 0);
+
+  const restPool = items.filter((it) => !it.assignedTo.length).reduce((s, it) => s + it.price, 0);
+  const everyoneW = sumW(people.map((p) => p.id));
+
   const totals = people.map((p, i) => {
     let subtotal = 0;
     items.forEach((it) => {
-      if (it.assignedTo.length && it.assignedTo.includes(p.id)) subtotal += it.price / it.assignedTo.length;
+      if (it.assignedTo.length && it.assignedTo.includes(p.id)) {
+        const tw = sumW(it.assignedTo);
+        subtotal += tw > 0 ? it.price * weightOf(p) / tw : it.price / it.assignedTo.length;
+      }
     });
+    if (shareRest && restPool > 0 && people.length) {
+      subtotal += everyoneW > 0 ? restPool * weightOf(p) / everyoneW : restPool / people.length;
+    }
     const service = subtotal * (parseFloat(servicePct) || 0) / 100;
     return { ...p, color: colorFor(i), subtotal, service, total: subtotal + service };
   });
-  const unassigned = items.filter((it) => !it.assignedTo.length).reduce((s, it) => s + it.price, 0);
+  // What's still sitting in "other / shared": nothing once the rest is shared out.
+  const unassigned = shareRest && people.length ? 0 : restPool;
   const itemsTotal = items.reduce((s, it) => s + it.price, 0);
   const grand = totals.reduce((s, t) => s + t.total, 0);
   const assignedCount = items.filter((it) => it.assignedTo.length).length;
@@ -744,7 +822,7 @@ function App() {
   const reset = () => {
     if (window.confirm("Start a fresh bill? This clears everyone and every item.")) {
       setPeople([]); setItems([]); setServicePct(10); setStep("people"); setError(null);
-      setGroups([]); setViewMode("person"); setSel([]);
+      setGroups([]); setViewMode("person"); setSel([]); setShareRest(true);
     }
   };
 
@@ -815,6 +893,7 @@ function App() {
                   })}
                 </div>
               )}
+              <PortionsPanel people={people} setWeight={setWeight} />
               {people.length > 0 && (
                 <button className="funk-btn dark block next" onClick={() => setStep("items")}>Next: add the items →</button>
               )}
@@ -905,9 +984,15 @@ function App() {
                       <button className="funk-tag all" onClick={() => assignAll(it.id)}>ALL</button>
                     )}
                   </div>
-                  {it.assignedTo.length > 1 && (
-                    <div className="funk-mini">Split {it.assignedTo.length} ways // {money(it.price / it.assignedTo.length)} each</div>
-                  )}
+                  {it.assignedTo.length > 1 && (() => {
+                    const ws = it.assignedTo.map((id) => weightOf(people.find((p) => p.id === id)));
+                    const even = ws.every((w) => w === ws[0]);
+                    return (
+                      <div className="funk-mini">
+                        Split {it.assignedTo.length} ways // {even ? money(it.price / it.assignedTo.length) + " each" : "by portion size"}
+                      </div>
+                    );
+                  })()}
                   {it.assignedTo.length === 0 && <div className="funk-mini warn">Unassigned — counts as “other / shared”</div>}
                 </div>
               ))}
@@ -922,7 +1007,8 @@ function App() {
             <TotalsView totals={totals} unassigned={unassigned} itemsTotal={itemsTotal} grand={grand}
               servicePct={servicePct} setServicePct={setServicePct} reset={reset}
               groups={groups} sel={sel} toggleSel={toggleSel} makeGroup={makeGroup}
-              ungroup={ungroup} renameGroup={renameGroup} viewMode={viewMode} setViewMode={setViewMode} />
+              ungroup={ungroup} renameGroup={renameGroup} viewMode={viewMode} setViewMode={setViewMode}
+              shareRest={shareRest} setShareRest={setShareRest} restPool={restPool} accent={accent} />
           )}
         </div>
 
