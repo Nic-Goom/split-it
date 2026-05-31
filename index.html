@@ -333,6 +333,12 @@ const CSS = `
 .funk-prow .pct { width: 72px; text-align: right; min-height: 44px; padding: 8px 10px; }
 .funk-prow .sym { font-size: 15px; font-weight: 700; color: var(--dim); }
 
+/* scanned-total reconciliation check */
+.funk-check { background: var(--field); border: 2px solid var(--line); border-radius: 13px; padding: 14px; margin-top: 18px; }
+.funk-check-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.funk-check-sum { font-family: var(--disp); font-size: 24px; line-height: 1; font-variant-numeric: tabular-nums; }
+.funk-check .pct { display: flex; align-items: center; gap: 8px; }
+
 /* footer */
 .funk-foot { text-align: center; padding: 18px 6px 6px; }
 .funk-foot .star { color: var(--accent); font-size: 13px; letter-spacing: 2px; }
@@ -597,6 +603,7 @@ function App() {
   const [nameDraft, setNameDraft] = useState("");
   const [mName, setMName] = useState("");
   const [mPrice, setMPrice] = useState("");
+  const [expectedTotal, setExpectedTotal] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const fileRef = useRef(null);
@@ -822,7 +829,7 @@ function App() {
   const reset = () => {
     if (window.confirm("Start a fresh bill? This clears everyone and every item.")) {
       setPeople([]); setItems([]); setServicePct(10); setStep("people"); setError(null);
-      setGroups([]); setViewMode("person"); setSel([]); setShareRest(true);
+      setGroups([]); setViewMode("person"); setSel([]); setShareRest(true); setExpectedTotal("");
     }
   };
 
@@ -949,6 +956,35 @@ function App() {
                   ))}
                 </div>
               )}
+
+              {items.length > 0 && (
+                <div className="funk-check">
+                  <div className="funk-check-row">
+                    <span className="funk-label" style={{ margin: 0 }}>Scanned items</span>
+                    <span className="funk-check-sum">{money(itemsTotal)}</span>
+                  </div>
+                  <p className="funk-mini" style={{ margin: "8px 0 10px" }}>
+                    Type the receipt’s items subtotal (before service) to check the scan added up right.
+                  </p>
+                  <span className="pct">
+                    <span className="sym" style={{ fontSize: 16, fontWeight: 700, color: "var(--dim)" }}>£</span>
+                    <input className="funk-input" inputMode="decimal" placeholder="Receipt subtotal"
+                      value={expectedTotal} onChange={(e) => setExpectedTotal(e.target.value)} />
+                  </span>
+                  {expectedTotal.trim() !== "" && !isNaN(parseFloat(expectedTotal)) && (() => {
+                    const diff = itemsTotal - parseFloat(expectedTotal);
+                    const off = Math.abs(diff) >= 0.005;
+                    return (
+                      <div className={"funk-mini" + (off ? " warn" : "")} style={{ marginTop: 10 }}>
+                        {off
+                          ? money(Math.abs(diff)) + (diff > 0 ? " over" : " under") + " your receipt — check the list above for a misread price or a duplicated line."
+                          : "✓ Matches your receipt — the scan is spot on."}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               {items.length > 0 && (
                 <button className="funk-btn dark block next" onClick={() => setStep("split")}>Next: tap who had what →</button>
               )}
