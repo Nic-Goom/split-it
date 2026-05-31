@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Split-it">
   <title>Split-it</title>
-  <style>html,body{margin:0;padding:0;background:#14121A;}#root{min-height:100vh;}</style>
+  <style>html,body{margin:0;padding:0;background:#14121A;overflow-x:hidden;max-width:100%;}#root{min-height:100vh;}</style>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -141,7 +141,7 @@ const CSS = `
   color: var(--accent); margin: 0 0 6px;
 }
 .funk-title {
-  font-family: var(--disp); font-weight: 400; font-size: 80px; line-height: 0.82;
+  font-family: var(--disp); font-weight: 400; font-size: clamp(56px, 20vw, 80px); line-height: 0.82;
   letter-spacing: 1px; margin: 0; text-transform: uppercase; color: var(--text);
 }
 .funk-title .dash {
@@ -276,10 +276,12 @@ const CSS = `
 .funk-svc .pct input { width: 64px; text-align: right; min-height: 44px; padding: 8px 10px; }
 .funk-svc .pct .sym { font-size: 16px; font-weight: 700; color: var(--dim); }
 
-.funk-trow { display: flex; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1.5px dashed var(--line); animation: trowin .42s both cubic-bezier(0.2,0.8,0.3,1); }
-.funk-trow .who { display: flex; align-items: center; gap: 11px; font-size: 15px; font-weight: 700; flex: none; text-transform: uppercase; letter-spacing: 0.4px; }
-.funk-trow .lead { flex: 1; border-bottom: 2px dotted var(--line); transform: translateY(-2px); min-width: 16px; }
+.funk-trow { display: flex; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1.5px dashed var(--line); animation: trowin .42s both cubic-bezier(0.2,0.8,0.3,1); min-width: 0; }
+.funk-trow .who { display: flex; align-items: center; gap: 11px; font-size: 15px; font-weight: 700; flex: 0 1 auto; min-width: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+.funk-trow .lead { flex: 1; border-bottom: 2px dotted var(--line); transform: translateY(-2px); min-width: 12px; }
 .funk-trow .amt { font-family: var(--disp); font-size: 27px; line-height: 0.9; flex: none; font-variant-numeric: tabular-nums; }
+.funk-gname { max-width: 100%; }
+.funk-gmembers { min-width: 0; word-break: break-word; }
 .funk-trow.shared { color: var(--dim); }
 .funk-tag.sel { box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent); }
 .funk-builder { background: var(--field); border: 2px dashed var(--line); border-radius: 13px; padding: 14px; margin-bottom: 16px; }
@@ -300,8 +302,8 @@ const CSS = `
 }
 @keyframes splashin { from{opacity:0; transform: scale(0.5) rotate(-12deg);} to{opacity:0.9; transform: rotate(-8deg);} }
 .funk-grand .gl { position: relative; z-index: 1; }
-.funk-grand .lab { font-family: var(--disp); font-size: 22px; line-height: 0.86; text-transform: uppercase; color: var(--dim); }
-.funk-grand .big { font-family: var(--disp); font-size: 66px; line-height: 0.82; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+.funk-grand .lab { font-family: var(--disp); font-size: 22px; line-height: 0.86; text-transform: uppercase; color: var(--dim); flex: none; }
+.funk-grand .big { font-family: var(--disp); font-size: clamp(40px, 15vw, 66px); line-height: 0.82; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .funk-stamp {
   position: absolute; left: -4px; top: -30px; z-index: 2;
   font-family: var(--disp); font-size: 16px; letter-spacing: 1.5px; text-transform: uppercase;
@@ -370,8 +372,8 @@ const CSS = `
   .funk-body.anim, .funk-chip, .funk-tag.on, .funk-trow, .funk-splash, .funk-stamp { animation: none !important; }
 }
 @media (max-width: 480px) {
-  .funk-trow .amt { font-size: 23px; }
-  .funk-grand .big { font-size: 54px; }
+  .funk-trow .amt { font-size: clamp(18px, 6vw, 23px); }
+  .funk-grand .big { font-size: clamp(40px, 15vw, 54px); }
 }
 `;
 
@@ -519,8 +521,8 @@ function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServ
 
           {viewMode === "group" && groupRows.map((g, idx) => (
             <div className="funk-trow" key={g.id} style={{ animationDelay: (idx * 65) + "ms", alignItems: "flex-start" }}>
-              <span className="who" style={{ flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="who" style={{ flexDirection: "column", alignItems: "flex-start", gap: 5, flex: 1, minWidth: 0 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: "100%" }}>
                   <span className="funk-gdots">
                     {g.members.slice(0, 4).map((m) => (<span key={m.id} className="gd" style={{ background: m.color }} />))}
                   </span>
@@ -531,7 +533,7 @@ function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServ
                   <button className="funk-ungroup" onClick={() => ungroup(g.id)}>Ungroup</button>
                 </span>
               </span>
-              <span className="lead" />
+              <span className="lead" style={{ flex: "0 0 12px" }} />
               <span className="amt">{money(g.total)}</span>
             </div>
           ))}
