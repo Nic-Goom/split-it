@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14121A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Split-it">
+  <title>Split-it</title>
+  <style>html,body{margin:0;padding:0;background:#14121A;}#root{min-height:100vh;}</style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+const { useState, useRef, useEffect } = React;
+
+// ── SPLIT-IT ──────────────────────────────────────────────────────────────
+// Funky bill-splitter for friends. Look by Claude Design (LOUD edition),
+// rebuilt as a working artifact: receipt photo-reading + full splitting logic.
+// Heavy bundled font/texture images swapped for web-native equivalents so it
+// runs anywhere and stays shareable. Four-step flow & features unchanged.
+
+const THEMES = {
+  Night:  { ground:"#14121A", panel:"#1E1B27", panel2:"#28222F", text:"#F3F0FA", dim:"rgba(243,240,250,0.58)", faint:"rgba(243,240,250,0.34)", line:"rgba(243,240,250,0.14)", field:"#221E2C" },
+  Purple: { ground:"#241441", panel:"#321C5C", panel2:"#3D236E", text:"#FAF6FF", dim:"rgba(250,246,255,0.62)", faint:"rgba(250,246,255,0.36)", line:"rgba(250,246,255,0.20)", field:"#371F66" },
+  Bone:   { ground:"#EEE6D4", panel:"#FFFFFF", panel2:"#F7F1E3", text:"#1A1521", dim:"rgba(26,21,33,0.62)", faint:"rgba(26,21,33,0.40)", line:"rgba(26,21,33,0.16)", field:"#FFFFFF" },
+};
+
+const PALETTE = ["#8B5CF6", "#2DD4BF", "#E8FF4D", "#FB7185", "#38BDF8", "#FB923C", "#C084FC", "#34D399"];
+
+// per-step highlight colour for the marker-stroke section headers
+const STEP_COLOR = { people: "#2DD4BF", items: "#FB7185", split: "#E8FF4D", totals: "#FB7185" };
+
+// bring-your-own-key: stored only on this device, never shared
+const KEY_LS = "splitit_anthropic_key";
+const loadKey = () => { try { return localStorage.getItem(KEY_LS) || ""; } catch (e) { return ""; } };
+
+const money = (n) => "£" + (Math.round(n * 100) / 100).toFixed(2);
+
+const initials = (name) =>
+  name.trim().split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+
+// pick dark/light ink for a given background colour (contrast)
+const inkFor = (hex) => {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.33 ? "#15140F" : "#FFFFFF";
+};
+
+const PREFERS_REDUCED = () =>
+  typeof window !== "undefined" && window.matchMedia &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function useCountUp(value, duration = 800) {
+  const [disp, setDisp] = useState(0);
+  const fromRef = useRef(0);
+  const rafRef = useRef(0);
+  useEffect(() => {
+    if (PREFERS_REDUCED()) { setDisp(value); fromRef.current = value; return; }
+    const from = fromRef.current;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      const e = 1 - Math.pow(1 - t, 3);
+      setDisp(from + (value - from) * e);
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+      else fromRef.current = value;
+    };
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [value, duration]);
+  return disp;
+}
+
+const CameraIcon = (p) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2L8 5h8l1.5 2h2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z" />
+    <circle cx="12" cy="13" r="3.4" />
+  </svg>
+);
+const Xmark = (p) => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2.6" strokeLinecap="round" {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </svg>
+);
+const Check = (p) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <path d="M5 13l4 4L19 7" />
+  </svg>
+);
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Anton&display=swap');
+
+.funk-wrap {
+  --disp: 'Anton', 'Arial Narrow', sans-serif;
+  --body: Verdana, Geneva, Tahoma, sans-serif;
+  min-height: 100vh;
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--body);
+  display: flex; justify-content: center;
+  padding: 26px 14px 110px;
+  position: relative; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+.funk-wrap, .funk-wrap * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* halftone texture decorations (CSS dot pattern) */
+.funk-tex {
+  position: fixed; pointer-events: none; z-index: 0;
+  width: 340px; height: 340px; opacity: 0.5; mix-blend-mode: screen;
+  background-image: radial-gradient(currentColor 1.6px, transparent 1.8px);
+  background-size: 10px 10px;
+  -webkit-mask-image: radial-gradient(circle at center, #000 0%, transparent 70%);
+  mask-image: radial-gradient(circle at center, #000 0%, transparent 70%);
+}
+.funk-wrap[data-bone="1"] .funk-tex { mix-blend-mode: multiply; opacity: 0.4; }
+.funk-tex.tl { top: -120px; left: -130px; color: #8B5CF6; transform: rotate(8deg); }
+.funk-tex.br { bottom: -110px; right: -120px; color: #2DD4BF; width: 380px; height: 380px; transform: rotate(-12deg); }
+.funk-wrap[data-tex="0"] .funk-tex { display: none; }
+
+.funk-col { width: 100%; max-width: 440px; position: relative; z-index: 1; }
+
+/* ── header ── */
+.funk-head { text-align: center; padding: 4px 6px 6px; }
+.funk-eyebrow {
+  font-size: 10px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700;
+  color: var(--accent); margin: 0 0 6px;
+}
+.funk-title {
+  font-family: var(--disp); font-weight: 400; font-size: 80px; line-height: 0.82;
+  letter-spacing: 1px; margin: 0; text-transform: uppercase; color: var(--text);
+}
+.funk-title .dash {
+  display: inline-block; color: var(--accent-ink); background: var(--accent);
+  padding: 0 0.06em; transform: rotate(-3deg); border-radius: 4px; margin: 0 0.02em;
+}
+.funk-sub { font-size: 11px; letter-spacing: 1px; color: var(--dim); margin-top: 12px; font-weight: 700; }
+.funk-meta {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 9.5px; letter-spacing: 2px; text-transform: uppercase; font-weight: 700;
+  color: var(--faint); margin-top: 8px;
+}
+
+/* ── stepper ── */
+.funk-tabs { display: grid; grid-template-columns: repeat(4,1fr); gap: 5px; margin: 20px 0 4px; }
+.funk-tab {
+  appearance: none; cursor: pointer; background: var(--panel);
+  border: 2px solid var(--line); border-radius: 12px;
+  padding: 9px 4px 8px; min-height: 60px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-family: var(--body); color: var(--dim);
+  transition: border-color .18s, background .18s, transform .12s;
+}
+.funk-tab:active { transform: scale(0.96); }
+.funk-tab .num { font-family: var(--disp); font-size: 26px; line-height: 0.9; color: var(--faint); transition: color .18s; }
+.funk-tab .lab { font-size: 9px; letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; display: flex; align-items: center; gap: 4px; }
+.funk-tab .ct {
+  display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 999px; font-size: 9px; font-weight: 700; line-height: 1; background: var(--line); color: var(--text);
+}
+.funk-tab.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.funk-tab.on .num { color: var(--accent-ink); }
+.funk-tab.on .ct { background: rgba(0,0,0,0.22); color: var(--accent-ink); }
+
+/* ── card / body ── */
+.funk-card { background: var(--panel); border: 2px solid var(--line); border-radius: 18px; padding: 20px 18px 22px; margin-top: 10px; position: relative; overflow: hidden; }
+.funk-body.anim { animation: feed .36s cubic-bezier(0.2,0.8,0.3,1); }
+@keyframes feed { from { opacity: 0; transform: translateY(16px) scale(0.99);} to { opacity:1; transform:none;} }
+
+/* marker-stroke section header */
+.funk-stroke {
+  display: inline-block; font-family: var(--disp); font-weight: 400;
+  font-size: 24px; line-height: 1; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 9px 18px 7px; margin: 0 0 17px; white-space: nowrap;
+  border-radius: 7px 11px 6px 10px; transform: rotate(-1.4deg);
+  box-shadow: 2px 2px 0 rgba(0,0,0,0.18);
+}
+
+.funk-label { font-size: 10.5px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--dim); margin: 0 0 11px; font-weight: 700; }
+
+/* inputs & buttons */
+.funk-input {
+  font-family: var(--body); font-size: 15px; color: var(--text); font-weight: 600;
+  background: var(--field); border: 2px solid var(--line); border-radius: 11px;
+  padding: 13px 14px; width: 100%; outline: none; min-height: 50px;
+  transition: border-color .15s, box-shadow .15s;
+}
+.funk-input::placeholder { color: var(--faint); font-weight: 600; }
+.funk-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
+
+.funk-btn {
+  font-family: var(--disp); font-weight: 400; cursor: pointer; border: none;
+  background: var(--accent); color: var(--accent-ink); border-radius: 12px;
+  padding: 14px 18px 12px; font-size: 21px; letter-spacing: 0.6px; text-transform: uppercase;
+  min-height: 52px; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  transition: transform .12s, filter .16s, opacity .15s;
+}
+.funk-btn svg { stroke-width: 2.2; }
+.funk-btn:active { transform: scale(0.97); filter: brightness(0.92); }
+.funk-btn.dark { background: var(--text); color: var(--ground); }
+.funk-btn.ghost { background: transparent; color: var(--text); border: 2px solid var(--line); }
+.funk-btn:disabled { opacity: 0.45; cursor: default; }
+.funk-btn.block { width: 100%; }
+.funk-btn.next { margin-top: 20px; }
+
+.funk-row { display: flex; align-items: center; gap: 9px; }
+
+/* ── people chips ── */
+.funk-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.funk-chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 7px 9px 7px 7px; border-radius: 999px; font-size: 14px; font-weight: 700;
+  border: none; min-height: 42px; text-transform: uppercase; letter-spacing: 0.5px;
+  animation: pop .3s cubic-bezier(0.34,1.45,0.5,1);
+}
+@keyframes pop { from { opacity:0; transform: scale(0.5) rotate(-6deg);} to { opacity:1; transform: none;} }
+.funk-av { width: 28px; height: 28px; border-radius: 999px; display: grid; place-items: center; font-family: var(--disp); font-size: 15px; line-height: 1; flex: none; padding-top: 2px; }
+.funk-x {
+  border: none; background: transparent; cursor: pointer; display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 999px; opacity: 0.7; flex: none; transition: opacity .15s, background .15s;
+}
+.funk-x:active { opacity: 1; background: rgba(0,0,0,0.18); }
+
+/* ── item lines ── */
+.funk-item { padding: 13px 0; border-bottom: 1.5px dashed var(--line); }
+.funk-item:last-of-type { border-bottom: none; }
+.funk-line { display: flex; align-items: baseline; gap: 10px; }
+.funk-line .nm { font-size: 14.5px; font-weight: 700; }
+.funk-line .lead { flex: 1; border-bottom: 2px dotted var(--line); transform: translateY(-4px); min-width: 14px; }
+.funk-line .amt { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.funk-edit { display: flex; align-items: center; gap: 7px; }
+.funk-edit .ename { flex: 1; font-family: var(--body); font-size: 14.5px; font-weight: 700; color: var(--text); border: none; background: transparent; padding: 7px 2px; outline: none; border-bottom: 2px solid transparent; transition: border-color .15s; }
+.funk-edit .ename:focus { border-bottom-color: var(--accent); }
+.funk-edit .eprice { width: 78px; font-family: var(--body); font-size: 14.5px; font-weight: 700; color: var(--text); border: none; background: transparent; padding: 7px 2px; text-align: right; outline: none; font-variant-numeric: tabular-nums; border-bottom: 2px solid transparent; transition: border-color .15s; }
+.funk-edit .eprice:focus { border-bottom-color: var(--accent); }
+
+/* ── split tags (name pills) ── */
+.funk-iassign { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.funk-tag {
+  display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 14px;
+  border-radius: 999px; font-family: var(--body); font-size: 13px; font-weight: 700;
+  letter-spacing: 0.2px; cursor: pointer; border: 2px solid transparent;
+  background: transparent; color: var(--dim); box-shadow: inset 0 0 0 2px var(--line);
+  transition: transform .14s, box-shadow .16s, color .16s, background .16s;
+}
+.funk-tag .dot { width: 13px; height: 13px; border-radius: 999px; flex: none; }
+.funk-tag .tick { display: grid; place-items: center; width: 14px; height: 14px; flex: none; }
+.funk-tag:active { transform: scale(0.92); }
+.funk-tag.on { box-shadow: 0 4px 12px -4px rgba(0,0,0,0.55); border-color: rgba(0,0,0,0.22); animation: tagpop .26s cubic-bezier(0.34,1.5,0.5,1); }
+@keyframes tagpop { 0%{transform:scale(0.82);} 55%{transform:scale(1.1);} 100%{transform:scale(1);} }
+.funk-tag.all { color: var(--dim); letter-spacing: 1px; text-transform: uppercase; font-family: var(--disp); font-size: 14px; padding: 0 16px; }
+.funk-tag.all:active { transform: scale(0.94); }
+
+.funk-mini { font-size: 11px; color: var(--dim); margin-top: 9px; font-weight: 700; letter-spacing: 0.4px; }
+.funk-mini.warn { color: var(--accent); }
+
+/* ── totals ── */
+.funk-svc { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; padding: 12px 14px; background: var(--field); border: 2px solid var(--line); border-radius: 13px; }
+.funk-svc .funk-label { margin: 0; }
+.funk-svc .pct { display: flex; align-items: center; gap: 6px; }
+.funk-svc .pct input { width: 64px; text-align: right; min-height: 44px; padding: 8px 10px; }
+.funk-svc .pct .sym { font-size: 16px; font-weight: 700; color: var(--dim); }
+
+.funk-trow { display: flex; align-items: center; gap: 11px; padding: 12px 0; border-bottom: 1.5px dashed var(--line); animation: trowin .42s both cubic-bezier(0.2,0.8,0.3,1); }
+.funk-trow .who { display: flex; align-items: center; gap: 11px; font-size: 15px; font-weight: 700; flex: none; text-transform: uppercase; letter-spacing: 0.4px; }
+.funk-trow .lead { flex: 1; border-bottom: 2px dotted var(--line); transform: translateY(-2px); min-width: 16px; }
+.funk-trow .amt { font-family: var(--disp); font-size: 27px; line-height: 0.9; flex: none; font-variant-numeric: tabular-nums; }
+.funk-trow.shared { color: var(--dim); }
+.funk-tag.sel { box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent); }
+.funk-builder { background: var(--field); border: 2px dashed var(--line); border-radius: 13px; padding: 14px; margin-bottom: 16px; }
+.funk-gdots { display: flex; align-items: center; }
+.funk-gdots .gd { width: 22px; height: 22px; border-radius: 999px; border: 2px solid var(--panel); margin-right: -7px; }
+.funk-gname { font-family: var(--body); font-weight: 700; font-size: 15px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text); background: transparent; border: none; border-bottom: 2px solid transparent; padding: 3px 2px; outline: none; max-width: 168px; }
+.funk-gname:focus { border-bottom-color: var(--accent); }
+.funk-gmembers { font-size: 11px; color: var(--dim); font-weight: 700; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.funk-ungroup { background: none; border: none; color: var(--accent); font-weight: 700; font-size: 11px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; padding: 0; }
+@keyframes trowin { from{opacity:0; transform: translateX(-14px);} to{opacity:1; transform:none;} }
+
+.funk-grand { position: relative; margin-top: 18px; padding-top: 18px; border-top: 3px solid var(--text); display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.funk-splash {
+  position: absolute; right: -22px; top: -30px; width: 150px; height: 150px; z-index: 0;
+  pointer-events: none; opacity: 0.9; background: var(--accent);
+  border-radius: 42% 58% 63% 37% / 45% 38% 62% 55%; transform: rotate(-8deg);
+  animation: splashin .6s cubic-bezier(0.2,1.1,0.4,1) 0.15s both;
+}
+@keyframes splashin { from{opacity:0; transform: scale(0.5) rotate(-12deg);} to{opacity:0.9; transform: rotate(-8deg);} }
+.funk-grand .gl { position: relative; z-index: 1; }
+.funk-grand .lab { font-family: var(--disp); font-size: 22px; line-height: 0.86; text-transform: uppercase; color: var(--dim); }
+.funk-grand .big { font-family: var(--disp); font-size: 66px; line-height: 0.82; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+.funk-stamp {
+  position: absolute; left: -4px; top: -30px; z-index: 2;
+  font-family: var(--disp); font-size: 16px; letter-spacing: 1.5px; text-transform: uppercase;
+  border: 3px solid var(--accent); color: var(--accent); border-radius: 8px;
+  padding: 5px 11px 3px; transform: rotate(-8deg); display: flex; align-items: center; gap: 6px;
+  pointer-events: none; animation: stamp .42s cubic-bezier(0.3,1.3,0.5,1) 0.55s both;
+}
+@keyframes stamp { 0%{opacity:0; transform: rotate(-8deg) scale(2.6);} 60%{opacity:1; transform: rotate(-8deg) scale(0.9);} 100%{opacity:0.95; transform: rotate(-8deg) scale(1);} }
+
+.funk-note { background: color-mix(in srgb, var(--accent) 16%, transparent); border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 12px; padding: 12px 14px; font-size: 12px; line-height: 1.55; margin-top: 15px; color: var(--text); font-weight: 600; }
+.funk-err { background: rgba(255,77,109,0.16); border-color: rgba(255,77,109,0.5); }
+.funk-empty { text-align: center; color: var(--faint); font-size: 13px; padding: 30px 8px; line-height: 1.7; font-weight: 700; }
+
+/* api key / scanning */
+.funk-keybar { background: var(--field); border: 2px dashed var(--line); border-radius: 13px; padding: 14px; }
+.funk-keymsg { font-size: 12px; line-height: 1.5; color: var(--dim); font-weight: 700; margin: 0 0 10px; }
+.funk-keylink { font-size: 11px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; text-decoration: none; }
+.funk-keyrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 11px; font-weight: 700; color: var(--dim); }
+
+/* footer */
+.funk-foot { text-align: center; padding: 18px 6px 6px; }
+.funk-foot .star { color: var(--accent); font-size: 13px; letter-spacing: 2px; }
+.funk-foot .txt { font-size: 9.5px; letter-spacing: 2px; text-transform: uppercase; color: var(--faint); font-weight: 700; margin-top: 8px; }
+
+.spin { display:inline-block; width:16px; height:16px; border:2.5px solid color-mix(in srgb, var(--accent-ink) 35%, transparent); border-top-color:var(--accent-ink); border-radius:50%; animation: sp .7s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg);} }
+
+/* tweaks panel */
+.funk-tweaks { position: fixed; right: 16px; bottom: 16px; z-index: 50; font-family: var(--body); }
+.funk-tweaks .toggle { cursor: pointer; border: 2px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 9px 15px; font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+.funk-panel { width: 244px; background: var(--panel); border: 2px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 10px; }
+.funk-panel h4 { font-size: 9.5px; letter-spacing: 2px; text-transform: uppercase; color: var(--faint); font-weight: 700; margin: 0 0 10px; }
+.funk-panel .grp { margin-bottom: 14px; }
+.funk-panel .grp:last-child { margin-bottom: 0; }
+.funk-panel .gl { font-size: 11px; font-weight: 700; color: var(--dim); margin-bottom: 7px; }
+.funk-seg { display: flex; gap: 4px; background: var(--field); border-radius: 9px; padding: 3px; }
+.funk-seg button { flex: 1; border: none; cursor: pointer; background: transparent; color: var(--dim); font-family: var(--body); font-size: 11px; font-weight: 700; padding: 7px 4px; border-radius: 6px; transition: background .15s, color .15s; }
+.funk-seg button.on { background: var(--panel2); color: var(--text); }
+.funk-sw { display: flex; gap: 8px; }
+.funk-sw button { width: 34px; height: 34px; border-radius: 9px; border: 2px solid transparent; cursor: pointer; transition: transform .12s; }
+.funk-sw button.on { border-color: var(--text); }
+.funk-sw button:active { transform: scale(0.9); }
+.funk-switch { width: 42px; height: 24px; border-radius: 999px; border: none; cursor: pointer; position: relative; transition: background .18s; }
+.funk-switch .knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 999px; background: #fff; transition: transform .18s; }
+.funk-switch.on .knob { transform: translateX(18px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .funk-body.anim, .funk-chip, .funk-tag.on, .funk-trow, .funk-splash, .funk-stamp { animation: none !important; }
+}
+@media (max-width: 480px) {
+  .funk-trow .amt { font-size: 23px; }
+  .funk-grand .big { font-size: 54px; }
+}
+`;
+
+function StrokeHeader({ step, children }) {
+  const c = STEP_COLOR[step] || STEP_COLOR.people;
+  return <h2 className="funk-stroke" style={{ background: c, color: inkFor(c) }}>{children}</h2>;
+}
+
+function TweaksPanel({ bg, setBg, accent, setAccent, texture, setTexture }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="funk-tweaks">
+      {open && (
+        <div className="funk-panel">
+          <h4>Vibe</h4>
+          <div className="grp">
+            <div className="gl">Background</div>
+            <div className="funk-seg">
+              {["Night", "Purple", "Bone"].map((b) => (
+                <button key={b} className={bg === b ? "on" : ""} onClick={() => setBg(b)}>{b}</button>
+              ))}
+            </div>
+          </div>
+          <div className="grp">
+            <div className="gl">House colour</div>
+            <div className="funk-sw">
+              {["#8B5CF6", "#2DD4BF", "#E8FF4D", "#FB7185"].map((c) => (
+                <button key={c} className={accent === c ? "on" : ""} style={{ background: c }} onClick={() => setAccent(c)} aria-label={"Accent " + c} />
+              ))}
+            </div>
+          </div>
+          <div className="grp" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div className="gl" style={{ margin: 0 }}>Halftone texture</div>
+            <button className={"funk-switch" + (texture ? " on" : "")} style={{ background: texture ? accent : "var(--line)" }} onClick={() => setTexture(!texture)} aria-label="Toggle texture">
+              <span className="knob" />
+            </button>
+          </div>
+        </div>
+      )}
+      <button className="toggle" onClick={() => setOpen(!open)}>✎ Tweaks</button>
+    </div>
+  );
+}
+
+function TotalsView({ totals, unassigned, itemsTotal, grand, servicePct, setServicePct, reset,
+  groups, sel, toggleSel, makeGroup, ungroup, renameGroup, viewMode, setViewMode }) {
+  const svc = parseFloat(servicePct) || 0;
+  const sharedTotal = unassigned + unassigned * svc / 100;
+  const grandTotal = grand + sharedTotal;
+  const animated = useCountUp(grandTotal);
+
+  const byId = {};
+  totals.forEach((t) => { byId[t.id] = t; });
+  const memberOf = {};
+  groups.forEach((g) => g.memberIds.forEach((m) => { memberOf[m] = g.id; }));
+  const groupRows = groups
+    .map((g) => {
+      const members = g.memberIds.map((id) => byId[id]).filter(Boolean);
+      return { ...g, members, total: members.reduce((s, m) => s + m.total, 0) };
+    })
+    .filter((g) => g.members.length);
+  const soloRows = totals.filter((t) => !memberOf[t.id]);
+
+  return (
+    <div className="funk-body anim" key="totals">
+      <StrokeHeader step="totals">The damage</StrokeHeader>
+      <div className="funk-svc">
+        <span className="funk-label">Service charge</span>
+        <span className="pct">
+          <input className="funk-input" inputMode="decimal" value={servicePct} onChange={(e) => setServicePct(e.target.value)} />
+          <span className="sym">%</span>
+        </span>
+      </div>
+
+      {totals.length === 0 ? (
+        <div className="funk-empty">Add people and items first.</div>
+      ) : (
+        <>
+          <div className="funk-seg" style={{ marginBottom: 16 }}>
+            <button className={viewMode === "person" ? "on" : ""} onClick={() => setViewMode("person")}>By person</button>
+            <button className={viewMode === "group" ? "on" : ""} onClick={() => setViewMode("group")}>By group</button>
+          </div>
+
+          {viewMode === "group" && (
+            <div className="funk-builder">
+              <p className="funk-label" style={{ margin: "0 0 10px" }}>Tap who pays together, then group them</p>
+              <div className="funk-iassign" style={{ marginTop: 0, marginBottom: 12 }}>
+                {totals.map((t) => {
+                  const on = sel.includes(t.id);
+                  return (
+                    <button key={t.id} className={"funk-tag" + (on ? " sel" : "")} onClick={() => toggleSel(t.id)}>
+                      <span className="dot" style={{ background: t.color }} />{t.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="funk-btn dark" disabled={sel.length < 2} onClick={makeGroup}
+                style={{ fontSize: 16, minHeight: 44, padding: "10px 16px" }}>
+                Group selected{sel.length ? " (" + sel.length + ")" : ""}
+              </button>
+            </div>
+          )}
+
+          {viewMode === "group" && groupRows.map((g, idx) => (
+            <div className="funk-trow" key={g.id} style={{ animationDelay: (idx * 65) + "ms", alignItems: "flex-start" }}>
+              <span className="who" style={{ flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="funk-gdots">
+                    {g.members.slice(0, 4).map((m) => (<span key={m.id} className="gd" style={{ background: m.color }} />))}
+                  </span>
+                  <input className="funk-gname" value={g.name} onChange={(e) => renameGroup(g.id, e.target.value)} aria-label="Group name" />
+                </span>
+                <span className="funk-gmembers">
+                  {g.members.map((m) => m.name).join(", ")}
+                  <button className="funk-ungroup" onClick={() => ungroup(g.id)}>Ungroup</button>
+                </span>
+              </span>
+              <span className="lead" />
+              <span className="amt">{money(g.total)}</span>
+            </div>
+          ))}
+
+          {(viewMode === "person" ? totals : soloRows).map((t, idx) => (
+            <div className="funk-trow" key={t.id} style={{ animationDelay: ((idx + groupRows.length) * 65) + "ms" }}>
+              <span className="who">
+                <span className="funk-av" style={{ background: t.color, color: inkFor(t.color) }}>{initials(t.name)}</span>
+                {t.name}
+              </span>
+              <span className="lead" />
+              <span className="amt">{money(t.total)}</span>
+            </div>
+          ))}
+
+          {unassigned > 0 && (
+            <div className="funk-trow shared">
+              <span className="who">
+                <span className="funk-av" style={{ background: "var(--line)", color: "var(--dim)" }}>?</span>
+                Other / shared
+              </span>
+              <span className="lead" />
+              <span className="amt">{money(sharedTotal)}</span>
+            </div>
+          )}
+
+          <div className="funk-grand">
+            <div className="funk-splash" />
+            <div className="funk-stamp"><Xmark style={{ width: 12, height: 12 }} />All square</div>
+            <span className="gl lab">Total<br />billed</span>
+            <span className="gl big">{money(animated)}</span>
+          </div>
+          <div className="funk-mini" style={{ textAlign: "right", marginTop: 10 }}>
+            Items {money(itemsTotal)} // {servicePct || 0}% service
+          </div>
+
+          {unassigned > 0 && (
+            <div className="funk-note">
+              {money(unassigned)} of items aren’t tagged to anyone — sitting under “other / shared”. Pop back to the Split tab if any of that was yours.
+            </div>
+          )}
+        </>
+      )}
+
+      <button className="funk-btn ghost block" style={{ marginTop: 24 }} onClick={reset}>
+        Start a fresh bill
+      </button>
+    </div>
+  );
+}
+
+function App() {
+  const [bg, setBg] = useState("Night");
+  const [accent, setAccent] = useState("#8B5CF6");
+  const [texture, setTexture] = useState(true);
+  const theme = THEMES[bg] || THEMES.Night;
+  const accentInk = inkFor(accent);
+
+  const [people, setPeople] = useState([]);
+  const [items, setItems] = useState([]);
+  const [servicePct, setServicePct] = useState(10);
+  const [step, setStep] = useState("people");
+  const [nameDraft, setNameDraft] = useState("");
+  const [mName, setMName] = useState("");
+  const [mPrice, setMPrice] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const fileRef = useRef(null);
+
+  const [groups, setGroups] = useState([]);
+  const [viewMode, setViewMode] = useState("person");
+  const [sel, setSel] = useState([]);
+
+  const [apiKey, setApiKey] = useState(loadKey());
+  const [keyDraft, setKeyDraft] = useState("");
+  const saveKey = () => { const k = keyDraft.trim(); if (!k) return; try { localStorage.setItem(KEY_LS, k); } catch (e) {} setApiKey(k); setKeyDraft(""); setError(null); };
+  const clearKey = () => { try { localStorage.removeItem(KEY_LS); } catch (e) {} setApiKey(""); };
+
+  const colorFor = (i) => PALETTE[i % PALETTE.length];
+
+  // ── people ──
+  const addPerson = () => {
+    const n = nameDraft.trim();
+    if (!n) return;
+    setPeople((p) => [...p, { id: Date.now() + Math.random(), name: n }]);
+    setNameDraft("");
+  };
+  const removePerson = (id) => {
+    setPeople((p) => p.filter((x) => x.id !== id));
+    setItems((its) => its.map((it) => ({ ...it, assignedTo: it.assignedTo.filter((a) => a !== id) })));
+    setGroups((gs) => gs.map((g) => ({ ...g, memberIds: g.memberIds.filter((m) => m !== id) })).filter((g) => g.memberIds.length));
+    setSel((s) => s.filter((x) => x !== id));
+  };
+
+  // ── items ──
+  const addItem = () => {
+    const n = mName.trim();
+    const pr = parseFloat(mPrice);
+    if (!n || isNaN(pr)) return;
+    setItems((it) => [...it, { id: Date.now() + Math.random(), name: n, price: pr, assignedTo: [] }]);
+    setMName(""); setMPrice("");
+  };
+  const removeItem = (id) => setItems((it) => it.filter((x) => x.id !== id));
+  const editItem = (id, field, val) =>
+    setItems((it) => it.map((x) => (x.id === id ? { ...x, [field]: val } : x)));
+  const toggleAssign = (itemId, personId) =>
+    setItems((it) =>
+      it.map((x) => {
+        if (x.id !== itemId) return x;
+        const has = x.assignedTo.includes(personId);
+        return { ...x, assignedTo: has ? x.assignedTo.filter((a) => a !== personId) : [...x.assignedTo, personId] };
+      })
+    );
+  const assignAll = (itemId) =>
+    setItems((it) => it.map((x) => (x.id === itemId ? { ...x, assignedTo: people.map((p) => p.id) } : x)));
+
+  // ── receipt photo via Claude ──
+  // Read the file directly (works in every sandbox). Then *try* to downscale via
+  // canvas for speed — but if the sandbox blocks canvas, fall back to sending the
+  // original image untouched rather than failing.
+  const readDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error("read"));
+      r.readAsDataURL(file);
+    });
+
+  const tryDownscale = (dataUrl) =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1600;
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          const out = canvas.toDataURL("image/jpeg", 0.85);
+          if (out && out.indexOf("data:image/jpeg") === 0) resolve({ media_type: "image/jpeg", data: out.split(",")[1] });
+          else resolve(null);
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
+
+  const readReceipt = async (file) => {
+    if (!file) return;
+    setLoading(true); setError(null);
+
+    if (!apiKey) {
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = "";
+      setError("Add your Anthropic API key above to scan receipts, or just type the items in below.");
+      return;
+    }
+
+    let dataUrl;
+    try { dataUrl = await readDataUrl(file); }
+    catch (e) {
+      setLoading(false);
+      if (fileRef.current) fileRef.current.value = "";
+      setError("Couldn’t open that file. Try a different photo, or type the items in below.");
+      return;
+    }
+
+    let payload = await tryDownscale(dataUrl);
+    if (!payload) {
+      const m = (dataUrl.match(/^data:([^;]+);/) || [])[1] || file.type || "";
+      const ok = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      if (!ok.includes(m)) {
+        setLoading(false);
+        if (fileRef.current) fileRef.current.value = "";
+        setError("That photo’s in a format the reader can’t open (iPhones sometimes use HEIC). Take a screenshot of it and upload that, or type the items in below.");
+        return;
+      }
+      payload = { media_type: m, data: dataUrl.split(",")[1] };
+    }
+
+    try {
+      const prompt =
+        "You are reading a UK pub/restaurant till receipt. Extract every ordered line item — food and drink only. " +
+        "Return ONLY a JSON array, no markdown fences, no commentary. " +
+        'Each element must be {"name": string, "price": number}. ' +
+        "Use a clean readable name (e.g. 'Pepsi Max', 'Sunday Beef Rump'). price is the line price in pounds as a number. " +
+        "If a 'PINT' line is immediately followed by a drink with a price, combine them into one item using that price. " +
+        "Ignore Subtotal, Service, Total, table info and any £0.00 lines. Keep duplicate items as separate entries.";
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 4096,
+          messages: [
+            { role: "user", content: [
+              { type: "image", source: { type: "base64", media_type: payload.media_type, data: payload.data } },
+              { type: "text", text: prompt },
+            ] },
+          ],
+        }),
+      });
+      if (!resp.ok) {
+        let detail = "";
+        try { const ej = await resp.json(); detail = (ej.error && ej.error.message) || ""; } catch (e2) {}
+        throw new Error("HTTP " + resp.status + (detail ? " — " + detail : ""));
+      }
+      const json = await resp.json();
+      const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+      const clean = text.replace(/```json|```/g, "").trim();
+      let parsed;
+      try { parsed = JSON.parse(clean); }
+      catch (pe) {
+        const mm = clean.match(/\[[\s\S]*\]/);
+        if (!mm) throw new Error("couldn’t read the items");
+        parsed = JSON.parse(mm[0]);
+      }
+      if (!Array.isArray(parsed) || !parsed.length) throw new Error("no items found");
+      setItems((prev) => [
+        ...prev,
+        ...parsed
+          .filter((x) => x && x.name && !isNaN(parseFloat(x.price)))
+          .map((x) => ({ id: Date.now() + Math.random(), name: String(x.name), price: parseFloat(x.price), assignedTo: [] })),
+      ]);
+    } catch (e) {
+      setError("The photo reader didn’t work (" + (e.message || "error") + "). Check your API key in the scan box above, or just type the items in below.");
+    }
+    setLoading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  // ── grouping (who pays together) ──
+  const toggleSel = (id) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const makeGroup = () => {
+    if (sel.length < 2) return;
+    setGroups((gs) => {
+      const cleaned = gs
+        .map((g) => ({ ...g, memberIds: g.memberIds.filter((m) => !sel.includes(m)) }))
+        .filter((g) => g.memberIds.length);
+      const first = (people.find((p) => p.id === sel[0]) || {}).name || "Group";
+      const name = first.split(/\s+/)[0] + (sel.length > 1 ? " +" + (sel.length - 1) : "");
+      return [...cleaned, { id: Date.now() + Math.random(), name, memberIds: [...sel] }];
+    });
+    setSel([]);
+  };
+  const ungroup = (gid) => setGroups((gs) => gs.filter((g) => g.id !== gid));
+  const renameGroup = (gid, name) => setGroups((gs) => gs.map((g) => (g.id === gid ? { ...g, name } : g)));
+
+  // ── totals ──
+  const totals = people.map((p, i) => {
+    let subtotal = 0;
+    items.forEach((it) => {
+      if (it.assignedTo.length && it.assignedTo.includes(p.id)) subtotal += it.price / it.assignedTo.length;
+    });
+    const service = subtotal * (parseFloat(servicePct) || 0) / 100;
+    return { ...p, color: colorFor(i), subtotal, service, total: subtotal + service };
+  });
+  const unassigned = items.filter((it) => !it.assignedTo.length).reduce((s, it) => s + it.price, 0);
+  const itemsTotal = items.reduce((s, it) => s + it.price, 0);
+  const grand = totals.reduce((s, t) => s + t.total, 0);
+  const assignedCount = items.filter((it) => it.assignedTo.length).length;
+
+  const reset = () => {
+    if (window.confirm("Start a fresh bill? This clears everyone and every item.")) {
+      setPeople([]); setItems([]); setServicePct(10); setStep("people"); setError(null);
+      setGroups([]); setViewMode("person"); setSel([]);
+    }
+  };
+
+  const today = new Date().toLocaleDateString("en-GB", { weekday: "short", day: "2-digit", month: "short" }).toUpperCase();
+
+  const tabs = [
+    { id: "people", label: "Who", n: people.length },
+    { id: "items", label: "Items", n: items.length },
+    { id: "split", label: "Split", n: assignedCount },
+    { id: "totals", label: "Total", n: null },
+  ];
+
+  const wrapStyle = {
+    "--ground": theme.ground, "--panel": theme.panel, "--panel2": theme.panel2,
+    "--text": theme.text, "--dim": theme.dim, "--faint": theme.faint,
+    "--line": theme.line, "--field": theme.field,
+    "--accent": accent, "--accent-ink": accentInk,
+  };
+
+  return (
+    <div className="funk-wrap" style={wrapStyle} data-tex={texture ? "1" : "0"} data-bone={bg === "Bone" ? "1" : "0"}>
+      <style>{CSS}</style>
+      <div className="funk-tex tl" />
+      <div className="funk-tex br" />
+
+      <div className="funk-col">
+        <div className="funk-head">
+          <p className="funk-eyebrow">// Split the bill, not the friendship //</p>
+          <h1 className="funk-title">Split<span className="dash">-</span>it</h1>
+          <div className="funk-sub">Table for friends · no maths required</div>
+          <div className="funk-meta">
+            <span>{today}</span><span>//</span><span>Party of {people.length || "—"}</span>
+          </div>
+        </div>
+
+        <div className="funk-tabs">
+          {tabs.map((tb, i) => (
+            <button key={tb.id} className={"funk-tab" + (step === tb.id ? " on" : "")} onClick={() => setStep(tb.id)}>
+              <span className="num">{"0" + (i + 1)}</span>
+              <span className="lab">{tb.label}{tb.n !== null && tb.n > 0 ? <span className="ct">{tb.n}</span> : null}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="funk-card">
+          {/* ── WHO ── */}
+          {step === "people" && (
+            <div className="funk-body anim" key="people">
+              <StrokeHeader step="people">Who’s in?</StrokeHeader>
+              <div className="funk-row" style={{ marginBottom: 16 }}>
+                <input className="funk-input" placeholder="Name" value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addPerson()} />
+                <button className="funk-btn" onClick={addPerson}>Add</button>
+              </div>
+              {people.length === 0 ? (
+                <div className="funk-empty">Add everyone splitting the bill.<br />Just first names are fine.</div>
+              ) : (
+                <div className="funk-chips">
+                  {people.map((p, i) => {
+                    const c = colorFor(i); const ink = inkFor(c);
+                    return (
+                      <span key={p.id} className="funk-chip" style={{ background: c, color: ink }}>
+                        <span className="funk-av" style={{ background: "rgba(255,255,255,0.26)", color: ink }}>{initials(p.name)}</span>
+                        {p.name}
+                        <button className="funk-x" style={{ color: ink }} onClick={() => removePerson(p.id)} aria-label={"Remove " + p.name}><Xmark /></button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {people.length > 0 && (
+                <button className="funk-btn dark block next" onClick={() => setStep("items")}>Next: add the items →</button>
+              )}
+            </div>
+          )}
+
+          {/* ── ITEMS ── */}
+          {step === "items" && (
+            <div className="funk-body anim" key="items">
+              <StrokeHeader step="items">Snap it</StrokeHeader>
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
+                onChange={(e) => readReceipt(e.target.files[0])} />
+              {apiKey ? (
+                <>
+                  <button className="funk-btn block" disabled={loading} onClick={() => fileRef.current && fileRef.current.click()}>
+                    {loading ? <><span className="spin" />Reading receipt…</> : <><CameraIcon />Photograph / upload receipt</>}
+                  </button>
+                  <div className="funk-keyrow"><span>🔑 Scanning on · your key, this device only</span><button className="funk-ungroup" onClick={clearKey}>Change</button></div>
+                </>
+              ) : (
+                <div className="funk-keybar">
+                  <p className="funk-keymsg">Add your own Anthropic API key once to scan receipts on this device. It’s saved only here and never shared — friends without a key can type items in below.</p>
+                  <div className="funk-row" style={{ marginBottom: 8 }}>
+                    <input className="funk-input" type="password" placeholder="sk-ant-…" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} />
+                    <button className="funk-btn dark" style={{ fontSize: 16, minHeight: 50, padding: "0 16px" }} onClick={saveKey}>Save</button>
+                  </div>
+                  <a className="funk-keylink" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">Where do I get a key? →</a>
+                </div>
+              )}
+              {error && <div className="funk-note funk-err">{error}</div>}
+
+              <p className="funk-label" style={{ margin: "20px 0 11px" }}>…or type items in</p>
+              <div className="funk-row" style={{ marginBottom: 6 }}>
+                <input className="funk-input" placeholder="Item" value={mName} onChange={(e) => setMName(e.target.value)} />
+                <input className="funk-input" style={{ maxWidth: 94 }} placeholder="£" inputMode="decimal"
+                  value={mPrice} onChange={(e) => setMPrice(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addItem()} />
+                <button className="funk-btn dark" style={{ padding: "0 18px", fontSize: 26 }} onClick={addItem}>+</button>
+              </div>
+
+              {items.length === 0 ? (
+                <div className="funk-empty">No items yet.</div>
+              ) : (
+                <div style={{ marginTop: 12 }}>
+                  {items.map((it) => (
+                    <div className="funk-item" key={it.id}>
+                      <div className="funk-edit">
+                        <input className="ename" value={it.name} onChange={(e) => editItem(it.id, "name", e.target.value)} />
+                        <input className="eprice" inputMode="decimal" value={it.price}
+                          onChange={(e) => editItem(it.id, "price", parseFloat(e.target.value) || 0)} />
+                        <button className="funk-x" style={{ color: "var(--dim)" }} onClick={() => removeItem(it.id)} aria-label="Remove item"><Xmark /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {items.length > 0 && (
+                <button className="funk-btn dark block next" onClick={() => setStep("split")}>Next: tap who had what →</button>
+              )}
+            </div>
+          )}
+
+          {/* ── SPLIT ── */}
+          {step === "split" && (
+            <div className="funk-body anim" key="split">
+              <StrokeHeader step="split">Who had what?</StrokeHeader>
+              {people.length === 0 && <div className="funk-note">Add people first, over on the “Who” tab.</div>}
+              {items.length === 0 && <div className="funk-empty">No items to split yet.</div>}
+              {items.map((it) => (
+                <div className="funk-item" key={it.id}>
+                  <div className="funk-line">
+                    <span className="nm">{it.name}</span>
+                    <span className="lead" />
+                    <span className="amt">{money(it.price)}</span>
+                  </div>
+                  <div className="funk-iassign">
+                    {people.map((p, i) => {
+                      const c = colorFor(i); const on = it.assignedTo.includes(p.id);
+                      return (
+                        <button key={p.id} className={"funk-tag" + (on ? " on" : "")}
+                          style={on ? { background: c, color: inkFor(c) } : undefined}
+                          onClick={() => toggleAssign(it.id, p.id)} title={p.name}>
+                          {on ? <span className="tick"><Check /></span> : <span className="dot" style={{ background: c }} />}
+                          {p.name}
+                        </button>
+                      );
+                    })}
+                    {people.length > 1 && (
+                      <button className="funk-tag all" onClick={() => assignAll(it.id)}>ALL</button>
+                    )}
+                  </div>
+                  {it.assignedTo.length > 1 && (
+                    <div className="funk-mini">Split {it.assignedTo.length} ways // {money(it.price / it.assignedTo.length)} each</div>
+                  )}
+                  {it.assignedTo.length === 0 && <div className="funk-mini warn">Unassigned — counts as “other / shared”</div>}
+                </div>
+              ))}
+              {items.length > 0 && people.length > 0 && (
+                <button className="funk-btn block next" onClick={() => setStep("totals")}>See the damage →</button>
+              )}
+            </div>
+          )}
+
+          {/* ── TOTALS ── */}
+          {step === "totals" && (
+            <TotalsView totals={totals} unassigned={unassigned} itemsTotal={itemsTotal} grand={grand}
+              servicePct={servicePct} setServicePct={setServicePct} reset={reset}
+              groups={groups} sel={sel} toggleSel={toggleSel} makeGroup={makeGroup}
+              ungroup={ungroup} renameGroup={renameGroup} viewMode={viewMode} setViewMode={setViewMode} />
+          )}
+        </div>
+
+        <div className="funk-foot">
+          <div className="star">★ ★ ★</div>
+          <div className="txt">Thank you · please come again</div>
+        </div>
+      </div>
+
+      <TweaksPanel bg={bg} setBg={setBg} accent={accent} setAccent={setAccent} texture={texture} setTexture={setTexture} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+  </script>
+</body>
+</html>
